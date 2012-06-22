@@ -20,8 +20,23 @@
   var reEscape = new RegExp('(\\' + ['/', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '\\'].join('|\\') + ')', 'g');
 
   function fnFormatResult(value, data, currentValue) {
-    var pattern = '(' + currentValue.replace(reEscape, '\\$1') + ')';
-    return value.replace(new RegExp(pattern, 'gi'), '<strong>$1<\/strong>');
+    rep = function(value, cv) {
+      var pattern = '(' + cv.replace(reEscape, '\\$1') + ')';
+      return value.replace(new RegExp(pattern, 'gi'), '<strong>$1<\/strong>');
+    }
+
+    if(typeof currentValue === "object"){
+      keys = Object.keys(currentValue);
+      for(var i = 0; i < keys.length; i++){
+        cv = currentValue[keys[i]];
+        if(cv.length != 0) {
+          value = rep(value, currentValue[keys[i]]);
+        }
+      }
+      return value;
+    }else {
+      return rep(currentValue);
+    }
   }
 
   /**
@@ -55,7 +70,8 @@
 
   function Autocomplete(el, options) {
     if(options.appendTo ? !options.watch : options.watch){
-      throw new Error("Must initialize both watch and appendTo");
+     // throw new Error("Must initialize both watch and appendTo");
+     return; //fail gracefully
     }
     if(options.appendTo){
       this.el = options.appendTo;
@@ -69,7 +85,6 @@
     this.data = [];
     this.badQueries = [];
     this.selectedIndex = -1;
-    console.log("IN INIT ", this);
     this.intervalId = 0;
     this.cachedResponse = [];
     this.onChangeInterval = null;
@@ -125,13 +140,13 @@
       this.container = $('#' + autocompleteElId);
       this.fixPosition();
       if (window.opera) {
-        this.el.keypress(function(e) { me.onKeyPress(e); });
+        this.inputs.keypress(function(e) { me.onKeyPress(e); });
       } else {
-        this.el.keydown(function(e) { me.onKeyPress(e); });
+        this.inputs.keydown(function(e) { me.onKeyPress(e); });
       }
-      this.el.keyup(function(e) { me.onKeyUp(e); });
-      this.el.blur(function() { me.enableKillerFn(); });
-      this.el.focus(function() { me.fixPosition(); });
+      this.inputs.keyup(function(e) { me.onKeyUp(e); });
+      this.inputs.blur(function() { me.enableKillerFn(); });
+      this.inputs.focus(function() { me.fixPosition(); });
     },
     
     setOptions: function(options){
@@ -189,7 +204,7 @@
       // and event will not be prevented
       switch (e.keyCode) {
         case 27: //KEY_ESC:
-          this.el.val(this.currentValue);
+          $("#"+e.srcElement.id).val(this.currentValue);
           this.hide();
           break;
         case 9: //KEY_TAB:
@@ -222,7 +237,7 @@
           return;
       }
       clearInterval(this.onChangeInterval);
-      if (this.currentValue !== this.el.val()) {
+      if (this.currentValue !== this.getCurrentValue()) {
         if (this.options.deferRequestBy > 0) {
           // Defer lookup in case when value changes very quickly:
           var me = this;
@@ -235,7 +250,9 @@
 
     onValueChange: function() {
       clearInterval(this.onChangeInterval);
-      this.currentValue = this.el.val();
+      this.currentValue = this.getCurrentValue();
+      console.log("ON VALUE CHANGE");
+
       //construct query if watching multiple fields 
       var q = this.getQuery();
       this.selectedIndex = -1;
@@ -243,18 +260,37 @@
         this.ignoreValueChange = false;
         return;
       }
-      if (q === '' || q.length < this.options.minChars) {
+      if(typeof q === "object" && this.countInputChars(q) < this.options.minChars){
+        this.hide();
+      } else if (q === '' || q.length < this.options.minChars) {
         this.hide();
       } else {
         this.getSuggestions(q);
       }
     },
 
+    countInputChars: function(q){
+      var keys = Object.keys(q);
+      var chars = "";
+      for(var i = 0; i < keys.length; i++){
+        chars += q[keys[i]];
+      }
+      return chars.length;
+    },
+    //best way to construct a comparator for multiple inputs is just append all inputs onto a string
+    getCurrentValue: function() {
+      var str = "";
+      this.inputs.each(function(){
+        str += this.value
+      });
+      return str;
+    },
+
     getQuery: function() {
       if(this.options.watch){
         var vals, name, value;
         vals = {};
-        this.options.watch.each(function (){
+        this.inputs.each(function (){
           name = $.trim(this.name);
           value = $.trim(this.value);
           vals[name] = value;
@@ -270,6 +306,7 @@
       }
     },
 
+    //TODO: Convert this so it works with multiple inputs!
     getSuggestionsLocal: function(q) {
       var ret, arr, len, val, i;
       arr = this.options.lookup;
@@ -288,17 +325,18 @@
     
     getSuggestions: function(q) {
       var cr, me;
-      cr = this.isLocal ? this.getSuggestionsLocal(q) : this.cachedResponse[q];
+      var currentString = this.getCurrentValue(q);
+      cr = this.isLocal ? this.getSuggestionsLocal(q) : this.cachedResponse[currentString];
       if (cr && $.isArray(cr.suggestions)) {
         this.suggestions = cr.suggestions;
         this.data = cr.data;
         this.suggest();
-      } else if (!this.isBadQuery(q)) {
+      } else if (!this.isBadQuery(currentString)) {
         me = this;
         if(typeof q == "string"){
           me.options.params[me.options.queryWord] = q;
         }else{
-          for(p in q){
+          for(p in q){  //TODO: Verify this works in older browsers
             me.options.params[p] = q[p]
           }
         }
@@ -352,11 +390,11 @@
       } catch (err) { return; }
       if (!$.isArray(response.data)) { response.data = []; }
       q = response[this.options.queryWord];
-      if(!this.options.noCache){
+      if(!this.options.noCache){  //TODO: Figure out how to handle cache in multiple form case...probably need to send it up to the server? super jank
         this.cachedResponse[q] = response;
         if (response.suggestions.length === 0) { this.badQueries.push(q); }
       }
-      if (q === this.getQuery()) {
+      if (true) {//(q === this.getQuery()) {  TODO: FIGURE OUT HOW TO HANDLE INPUT PRESERVATION FROM SERVER RESPONSE!
         this.suggestions = response.suggestions;
         this.data = response.data;
         this.suggest(); 
