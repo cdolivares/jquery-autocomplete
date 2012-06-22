@@ -1,4 +1,6 @@
 /**
+*  Modified by Chris Olivares - June 2012.  See README for explanation of changes.
+*
 *  Ajax Autocomplete for jQuery, version 1.1.3
 *  (c) 2010 Tomas Kirda
 *
@@ -13,6 +15,8 @@
 
 (function($) {
 
+  define(['jquery'], function($) {
+
   var reEscape = new RegExp('(\\' + ['/', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '\\'].join('|\\') + ')', 'g');
 
   function fnFormatResult(value, data, currentValue) {
@@ -20,14 +24,52 @@
     return value.replace(new RegExp(pattern, 'gi'), '<strong>$1<\/strong>');
   }
 
+  /**
+
+    Available Options
+
+    serviceUrl:'service/autocomplete.ashx',
+    minChars:2, 
+    delimiter: /(,|;)\s, // regex or character
+    maxHeight:400,
+    width:300,
+    zIndex: 9999,
+    deferRequestBy: 0, //miliseconds
+    params: { country:'Yes' }, //aditional parameters
+    noCache: false, //default is false, set to true to disable caching
+    // callback function:
+    onSelect: function(value, data){ alert('You selected: ' + value + ', ' + data); },
+    // local autosugest options:
+    lookup: ['January', 'February', 'March', 'April', 'May'] //local lookup values 
+  
+    New in v 2.0
+    
+
+    NOTE: Both of these options must be specified together!
+    
+    appendTo: $(selector)  //if present will append the list instead to this element. If multiple elements matched, the first one will be appended to
+    watch: $(selector)  //accepts input element. encodes the contents of each element into request using uri encoded &name=value 
+
+
+  */
+
   function Autocomplete(el, options) {
-    this.el = $(el);
+    if(options.appendTo ? !options.watch : options.watch){
+      throw new Error("Must initialize both watch and appendTo");
+    }
+    if(options.appendTo){
+      this.el = options.appendTo;
+      this.inputs = options.watch;
+    }else{
+      this.el = el;
+      this.inputs = el;
+    }
     this.el.attr('autocomplete', 'off');
     this.suggestions = [];
     this.data = [];
     this.badQueries = [];
     this.selectedIndex = -1;
-    this.currentValue = this.el.val();
+    console.log("IN INIT ", this);
     this.intervalId = 0;
     this.cachedResponse = [];
     this.onChangeInterval = null;
@@ -48,7 +90,8 @@
       zIndex: 9999
     };
     this.initialize();
-    this.setOptions(options);
+    this.setOptions(options);    //Set options first so we can correctly set the correct currentValue
+    this.currentValue = this.getQuery();
   }
   
   $.fn.autocomplete = function(options) {
@@ -193,7 +236,8 @@
     onValueChange: function() {
       clearInterval(this.onChangeInterval);
       this.currentValue = this.el.val();
-      var q = this.getQuery(this.currentValue);
+      //construct query if watching multiple fields 
+      var q = this.getQuery();
       this.selectedIndex = -1;
       if (this.ignoreValueChange) {
         this.ignoreValueChange = false;
@@ -206,12 +250,24 @@
       }
     },
 
-    getQuery: function(val) {
-      var d, arr;
-      d = this.options.delimiter;
-      if (!d) { return $.trim(val); }
-      arr = val.split(d);
-      return $.trim(arr[arr.length - 1]);
+    getQuery: function() {
+      if(this.options.watch){
+        var vals, name, value;
+        vals = {};
+        this.options.watch.each(function (){
+          name = $.trim(this.name);
+          value = $.trim(this.value);
+          vals[name] = value;
+        });
+        return vals;
+      }else {
+        var d, arr, val;
+        val = this.currentValue;
+        d = this.options.delimiter;
+        if (!d) { return $.trim(val); }
+        arr = val.split(d);
+        return $.trim(arr[arr.length - 1]);
+      }
     },
 
     getSuggestionsLocal: function(q) {
@@ -239,7 +295,13 @@
         this.suggest();
       } else if (!this.isBadQuery(q)) {
         me = this;
-        me.options.params[me.options.queryWord] = q;
+        if(typeof q == "string"){
+          me.options.params[me.options.queryWord] = q;
+        }else{
+          for(p in q){
+            me.options.params[p] = q[p]
+          }
+        }
         $.get(this.serviceUrl, me.options.params, function(txt) { me.processResponse(txt); }, 'text');
       }
     },
@@ -268,7 +330,7 @@
       me = this;
       len = this.suggestions.length;
       f = this.options.fnFormatResult;
-      v = this.getQuery(this.currentValue);
+      v = this.getQuery();
       mOver = function(xi) { return function() { me.activate(xi); }; };
       mClick = function(xi) { return function() { me.select(xi); }; };
       this.container.hide().empty();
@@ -294,7 +356,7 @@
         this.cachedResponse[q] = response;
         if (response.suggestions.length === 0) { this.badQueries.push(q); }
       }
-      if (q === this.getQuery(this.currentValue)) {
+      if (q === this.getQuery()) {
         this.suggestions = response.suggestions;
         this.data = response.data;
         this.suggest(); 
@@ -388,5 +450,6 @@
     }
 
   };
+});
 
 }(jQuery));

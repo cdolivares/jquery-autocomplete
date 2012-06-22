@@ -1,3 +1,10 @@
+This is yet another modification to the jquery autocomplete plugin.  The goals of this mod are:
+
+1. allow results to have a secondary piece of information inserted into its own div for custom styling
+2. add ability to watch multiple inputs and encode the values into ajax requests
+3. add ability to append elements onto the list that trigger a function and have a custom style associated with them
+
+
 Origin author: tomas@devbridge.com
 
 http://www.devbridge.com/projects/autocomplete/jquery/
