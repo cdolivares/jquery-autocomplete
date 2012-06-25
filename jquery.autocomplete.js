@@ -12,15 +12,13 @@
 
 /*jslint onevar: true, evil: true, nomen: true, eqeqeq: true, bitwise: true, regexp: true, newcap: true, immed: true */
 /*global window: true, document: true, clearInterval: true, setInterval: true, jQuery: true */
+define(['jquery'], function(jQuery) {
 
 (function($) {
-
-  define(['jquery'], function($) {
-
   var reEscape = new RegExp('(\\' + ['/', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '\\'].join('|\\') + ')', 'g');
 
   function fnFormatResult(value, data, currentValue) {
-    rep = function(value, cv) {
+    var rep = function(value, cv) {
       var pattern = '(' + cv.replace(reEscape, '\\$1') + ')';
       return value.replace(new RegExp(pattern, 'gi'), '<strong>$1<\/strong>');
     }
@@ -64,8 +62,8 @@
     
     appendTo: $(selector)  //if present will append the list instead to this element. If multiple elements matched, the first one will be appended to
     watch: $(selector)  //accepts input element. encodes the contents of each element into request using uri encoded &name=value 
-
-
+    fnBindElement: function //passes in the constructed div before it's appended to the dom to allow anyone to bind events to the div
+      - params (div, i, autocompleteObj)  //div is a jQuery object and autocompleteObj is an instance of AutoComplete
   */
 
   function Autocomplete(el, options) {
@@ -83,6 +81,7 @@
     this.el.attr('autocomplete', 'off');
     this.suggestions = [];
     this.data = [];
+    this.eventHandlers = {}
     this.badQueries = [];
     this.selectedIndex = -1;
     this.intervalId = 0;
@@ -101,6 +100,7 @@
       queryWord: 'query',
       params: {},
       fnFormatResult: fnFormatResult,
+      fnBindElement: null,
       delimiter: null,
       zIndex: 9999
     };
@@ -251,8 +251,6 @@
     onValueChange: function() {
       clearInterval(this.onChangeInterval);
       this.currentValue = this.getCurrentValue();
-      console.log("ON VALUE CHANGE");
-
       //construct query if watching multiple fields 
       var q = this.getQuery();
       this.selectedIndex = -1;
@@ -363,7 +361,7 @@
         this.hide();
         return;
       }
-
+      //TODO: Make fnFormatResult and fnBindElement use the new .register interface
       var me, len, div, f, v, i, s, mOver, mClick;
       me = this;
       len = this.suggestions.length;
@@ -373,14 +371,54 @@
       mClick = function(xi) { return function() { me.select(xi); }; };
       this.container.hide().empty();
       for (i = 0; i < len; i++) {
+        if(this.eventHandlers.list && this.eventHandlers.list['list_'+i]) {
+          fn = this.eventHandlers.list['list_'+i];
+          fn(this.container);
+        }
         s = this.suggestions[i];
         div = $((me.selectedIndex === i ? '<div class="selected"' : '<div') + ' title="' + s + '">' + f(s, this.data[i], v) + '</div>');
-        div.mouseover(mOver(i));
-        div.click(mClick(i));
+        if(this.options.fnBindElement){
+          this.options.fnBindElement(div, i, this);
+        }else {
+          div.mouseover(mOver(i));
+          div.click(mClick(i));
+        }
         this.container.append(div);
+      }
+      if(this.eventHandlers.list && this.eventHandlers.list['list_end']) {
+        fn = this.eventHandlers.list['list_end'];
+        fn(this.container);
       }
       this.enabled = true;
       this.container.show();
+    },
+
+    //TODO: Extend this to work with jQuery event binding and emitting
+    register: function(evnt, fn){
+      type = evnt.split('_')[0];
+      syncHandle = function(ev){
+        return ev.indexOf('list') != -1  //hardcoded for now
+      }        
+      if(!this.eventHandlers[type]){
+        this.eventHandlers[type] = {};
+      }
+      if(!syncHandle(evnt)) {
+        $(window).bind(evnt, fn);
+      }else {
+        this.eventHandlers[type][evnt] = fn;
+      }
+    },
+
+    unregister: function(evnt, fn){
+      type = evnt.split('_')[0];
+      if(!this.eventHandlers[type]){
+        this.eventHandlers[type] = {};
+      }
+      if(!syncHandle(evnt)) {
+        $(window).unbind(evnt, fn);
+      }else {
+        delete this.eventHandlers[type][evnt];
+      }    
     },
 
     processResponse: function(text) {
@@ -397,6 +435,8 @@
       if (true) {//(q === this.getQuery()) {  TODO: FIGURE OUT HOW TO HANDLE INPUT PRESERVATION FROM SERVER RESPONSE!
         this.suggestions = response.suggestions;
         this.data = response.data;
+        this.secondaryData = response.secondaryData;
+        $(window).trigger('state.autocomplete', [response.sstate]);
         this.suggest(); 
       }
     },
@@ -424,7 +464,11 @@
     select: function(i) {
       var selectedValue, f;
       selectedValue = this.suggestions[i];
-      if (selectedValue) {
+      if(this.options.watch) { //if watching multiple elements just pass data to passed in function
+        if(this.options.onSelect && $.isFunction(this.options.onSelect)){
+          this.options.onSelect(this.suggestions[i], this.data[i], this.watch);
+        }
+      } else if (selectedValue) {
         this.el.val(selectedValue);
         if (this.options.autoSubmit) {
           f = this.el.parents('form');
@@ -488,6 +532,5 @@
     }
 
   };
-});
-
 }(jQuery));
+});
