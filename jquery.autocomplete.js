@@ -64,6 +64,13 @@ define(['jquery'], function(jQuery) {
     watch: $(selector)  //accepts input element. encodes the contents of each element into request using uri encoded &name=value 
     fnBindElement: function //passes in the constructed div before it's appended to the dom to allow anyone to bind events to the div
       - params (div, i, autocompleteObj)  //div is a jQuery object and autocompleteObj is an instance of AutoComplete
+    inline: Boolean --> This tells autocomplete whether we should just float a div around the appendTo element, or if we should insert the div as a child
+                        on the specified div.
+    
+    NEW FNS:
+    .register(event, fn) - an interface to register functions against events. Valid events are
+      list_x ---> where x is the element before which this function should be called
+      state ----> called when the server changes search states. Current states are 'normal', 'fuzzy', 'none'
   */
 
   function Autocomplete(el, options) {
@@ -102,9 +109,10 @@ define(['jquery'], function(jQuery) {
       fnFormatResult: fnFormatResult,
       fnBindElement: null,
       delimiter: null,
-      zIndex: 9999
+      zIndex: 9999,
+      inline: false
     };
-    this.initialize();
+    this.initialize(options);
     this.setOptions(options);    //Set options first so we can correctly set the correct currentValue
     this.currentValue = this.getQuery();
   }
@@ -118,7 +126,7 @@ define(['jquery'], function(jQuery) {
 
     killerFn: null,
 
-    initialize: function() {
+    initialize: function(options) {
 
       var me, uid, autocompleteElId;
       me = this;
@@ -133,12 +141,11 @@ define(['jquery'], function(jQuery) {
       };
 
       if (!this.options.width) { this.options.width = this.el.width(); }
-      this.mainContainerId = 'AutocompleteContainter_' + uid;
+      this.mainContainerId = 'AutocompleteContainer_' + uid;
 
-      $('<div id="' + this.mainContainerId + '" style="position:absolute;z-index:9999;"><div class="autocomplete-w1"><div class="autocomplete" id="' + autocompleteElId + '" style="display:none; width:300px;"></div></div></div>').appendTo('body');
+      $('<div id="' + this.mainContainerId + '" class="autocomplete_parent"><div class="autocomplete-w1"><div class="autocomplete" id="' + autocompleteElId + '" style="display:none; width:300px;"></div></div></div>').appendTo('body');
 
       this.container = $('#' + autocompleteElId);
-      this.fixPosition();
       if (window.opera) {
         this.inputs.keypress(function(e) { me.onKeyPress(e); });
       } else {
@@ -146,7 +153,12 @@ define(['jquery'], function(jQuery) {
       }
       this.inputs.keyup(function(e) { me.onKeyUp(e); });
       this.inputs.blur(function() { me.enableKillerFn(); });
-      this.inputs.focus(function() { me.fixPosition(); });
+      if(options.inline) {
+        this.el.append(this.container);
+      }else{
+        this.fixPosition();
+        this.inputs.focus(function() { me.fixPosition(); });
+      }
     },
     
     setOptions: function(options){
@@ -178,6 +190,10 @@ define(['jquery'], function(jQuery) {
       $('#' + this.mainContainerId).css({ top: (offset.top + this.el.innerHeight()) + 'px', left: offset.left + 'px' });
     },
 
+    reposition: function() {
+      this.fixPosition();
+    },
+
     enableKillerFn: function() {
       var me = this;
       $(document).bind('click', me.killerFn);
@@ -191,7 +207,10 @@ define(['jquery'], function(jQuery) {
     killSuggestions: function() {
       var me = this;
       this.stopKillSuggestions();
-      this.intervalId = window.setInterval(function() { me.hide(); me.stopKillSuggestions(); }, 300);
+      //TODO: FIGURE OUT HOW TO KILL THIS ON CLICK...took out me.hide() for now!
+      //this.intervalId = window.setInterval(function() { me.hide(); me.stopKillSuggestions(); }, 300);
+      this.intervalId = window.setInterval(function() {me.stopKillSuggestions(); }, 300);
+
     },
 
     stopKillSuggestions: function() {
@@ -311,7 +330,7 @@ define(['jquery'], function(jQuery) {
       len = arr.suggestions.length;
       ret = { suggestions:[], data:[] };
       q = q.toLowerCase();
-      for(i=0; i< len; i++){
+      for(var i=0; i< len; i++){
         val = arr.suggestions[i];
         if(val.toLowerCase().indexOf(q) === 0){
           ret.suggestions.push(val);
@@ -338,7 +357,16 @@ define(['jquery'], function(jQuery) {
             me.options.params[p] = q[p]
           }
         }
-        $.get(this.serviceUrl, me.options.params, function(txt) { me.processResponse(txt); }, 'text');
+        $.ajax({
+          url: this.serviceUrl, 
+          data: me.options.params, 
+          success: function(txt) { me.processResponse(txt); }, 
+          dataType: 'text',
+          xhrFields: {
+            withCredentials: true
+          },
+          type: "POST"
+        });
       }
     },
 
@@ -370,9 +398,9 @@ define(['jquery'], function(jQuery) {
       mOver = function(xi) { return function() { me.activate(xi); }; };
       mClick = function(xi) { return function() { me.select(xi); }; };
       this.container.hide().empty();
-      for (i = 0; i < len; i++) {
-        if(this.eventHandlers.list && this.eventHandlers.list['list_'+i]) {
-          fn = this.eventHandlers.list['list_'+i];
+      for (var i = 0; i < len; i++) {
+        if(this.eventHandlers.list && this.eventHandlers.list['list_'+i+'.autocomplete']) { //TODO: make name construction transparent
+          fn = this.eventHandlers.list['list_'+i+'.autocomplete'];
           fn(this.container);
         }
         s = this.suggestions[i];
@@ -385,17 +413,19 @@ define(['jquery'], function(jQuery) {
         }
         this.container.append(div);
       }
-      if(this.eventHandlers.list && this.eventHandlers.list['list_end']) {
-        fn = this.eventHandlers.list['list_end'];
+      if(this.eventHandlers.list && this.eventHandlers.list['list_end.autocomplete']) {
+        fn = this.eventHandlers.list['list_end.autocomplete'];
         fn(this.container);
       }
       this.enabled = true;
       this.container.show();
     },
 
-    //TODO: Extend this to work with jQuery event binding and emitting
     register: function(evnt, fn){
       type = evnt.split('_')[0];
+      if(evnt.indexOf('autocomplete') == -1) {
+        evnt = evnt + ".autocomplete"
+      }
       syncHandle = function(ev){
         return ev.indexOf('list') != -1  //hardcoded for now
       }        
@@ -423,9 +453,11 @@ define(['jquery'], function(jQuery) {
 
     processResponse: function(text) {
       var response;
+      console.log("RESPONSE ", text);
+
       try {
         response = eval('(' + text + ')');
-      } catch (err) { return; }
+      } catch (err) { console.log("ERROR ", err);return; }
       if (!$.isArray(response.data)) { response.data = []; }
       q = response[this.options.queryWord];
       if(!this.options.noCache){  //TODO: Figure out how to handle cache in multiple form case...probably need to send it up to the server? super jank
@@ -529,6 +561,11 @@ define(['jquery'], function(jQuery) {
         arr = currVal.split(del);
         if (arr.length === 1) { return value; }
         return currVal.substr(0, currVal.length - arr[arr.length - 1].length) + value;
+    },
+
+    destroy: function(){
+      //get rid of autocomplete container!
+      $('[id*="AutocompleteCon"]').remove()
     }
 
   };
