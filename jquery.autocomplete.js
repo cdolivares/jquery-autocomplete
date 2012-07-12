@@ -65,12 +65,24 @@ define(['jquery'], function(jQuery) {
     fnBindElement: function //passes in the constructed div before it's appended to the dom to allow anyone to bind events to the div
       - params (div, i, autocompleteObj)  //div is a jQuery object and autocompleteObj is an instance of AutoComplete
     inline: Boolean --> This tells autocomplete whether we should just float a div around the appendTo element, or if we should insert the div as a child
-                        on the specified div.
+                        on the specified div. When specifying inline, the list does not automatically disappear on click events like floating div does.
     
     NEW FNS:
     .register(event, fn) - an interface to register functions against events. Valid events are
-      list_x ---> where x is the element before which this function should be called
+      list_x ---> where x is the element before which this function should be called.
+        -Function Signature -> (container, suggestions, data)
+        -return value -> number. return x if no modifications to container. else return x + y where y is the number of insertions into continer, suggestion, and data objects 
       state ----> called when the server changes search states. Current states are 'normal', 'fuzzy', 'none'
+      activate -----> async-- triggered when an element is activated. 
+        - Function Signature -> (e, container, suggestions, data, active, index)
+        - Return value -> NONE
+      acscroll ---> async -> triggered when the menu scrolls
+        - Function Signature -> (e, container, suggestions, data, active, index)
+        - Return value -> NONE
+      pre ----> sync -> triggered before any list is appended
+      hide ---> async -> triggered when the results are hidden!
+        - Function Signature -> ()
+        - Return value -> NONE
   */
 
   function Autocomplete(el, options) {
@@ -92,7 +104,7 @@ define(['jquery'], function(jQuery) {
     this.badQueries = [];
     this.selectedIndex = -1;
     this.intervalId = 0;
-    this.cachedResponse = [];
+    this.cachedResponse = {};
     this.onChangeInterval = null;
     this.ignoreValueChange = false;
     this.serviceUrl = options.serviceUrl;
@@ -110,10 +122,12 @@ define(['jquery'], function(jQuery) {
       fnBindElement: null,
       delimiter: null,
       zIndex: 9999,
-      inline: false
+      inline: false,
+      clearCache: 0
     };
     this.initialize(options);
     this.setOptions(options);    //Set options first so we can correctly set the correct currentValue
+    if(this.options.clearCache != 0){ me = this;this.cacheClearInterval = setInterval(function(){me.clearCache();}, this.options.clearCache*1000);}
     this.currentValue = this.getQuery();
   }
   
@@ -152,10 +166,10 @@ define(['jquery'], function(jQuery) {
         this.inputs.keydown(function(e) { me.onKeyPress(e); });
       }
       this.inputs.keyup(function(e) { me.onKeyUp(e); });
-      this.inputs.blur(function() { me.enableKillerFn(); });
       if(options.inline) {
         this.el.append(this.container);
       }else{
+        this.inputs.blur(function() { me.enableKillerFn(); });
         this.fixPosition();
         this.inputs.focus(function() { me.fixPosition(); });
       }
@@ -171,9 +185,13 @@ define(['jquery'], function(jQuery) {
       $('#'+this.mainContainerId).css({ zIndex:o.zIndex });
       this.container.css({ maxHeight: o.maxHeight + 'px', width:o.width });
     },
+
+    trigger: function(evnt, params){
+      setTimeout(function(){$(window).trigger(evnt, params)}, 1);
+    },
     
     clearCache: function(){
-      this.cachedResponse = [];
+      this.cachedResponse = {};
       this.badQueries = [];
     },
     
@@ -208,8 +226,8 @@ define(['jquery'], function(jQuery) {
       var me = this;
       this.stopKillSuggestions();
       //TODO: FIGURE OUT HOW TO KILL THIS ON CLICK...took out me.hide() for now!
-      //this.intervalId = window.setInterval(function() { me.hide(); me.stopKillSuggestions(); }, 300);
-      this.intervalId = window.setInterval(function() {me.stopKillSuggestions(); }, 300);
+      //SOLN: ONLY ENABLE THIS WHEN YOU ARE NOT APPENDING INLINE!
+      this.intervalId = window.setInterval(function() { me.hide(); me.stopKillSuggestions(); }, 300);
 
     },
 
@@ -307,11 +325,14 @@ define(['jquery'], function(jQuery) {
       if(this.options.watch){
         var vals, name, value;
         vals = {};
+        sig = ""
         this.inputs.each(function (){
           name = $.trim(this.name);
           value = $.trim(this.value);
           vals[name] = value;
+          sig += value;
         });
+        vals["sig"] = sig;
         return vals;
       }else {
         var d, arr, val;
@@ -348,7 +369,7 @@ define(['jquery'], function(jQuery) {
         this.suggestions = cr.suggestions;
         this.data = cr.data;
         this.suggest();
-      } else if (!this.isBadQuery(currentString)) {
+      } else if (this.cachedResponse[currentString] === undefined){//(!this.isBadQuery(currentString)) {
         me = this;
         if(typeof q == "string"){
           me.options.params[me.options.queryWord] = q;
@@ -367,6 +388,8 @@ define(['jquery'], function(jQuery) {
           },
           type: "POST"
         });
+      }else{
+        this.processThis(this.cachedResponse[currentString]);
       }
     },
 
@@ -382,9 +405,14 @@ define(['jquery'], function(jQuery) {
       this.enabled = false;
       this.selectedIndex = -1;
       this.container.hide();
+      this.trigger("hide.autocomplete", [])
     },
 
     suggest: function() {
+      this.container.hide().empty();
+      if(this.eventHandlers.pre){  //TODO: Change how all syncHandlers are regisetered so that pre...etc are not in a nested hash
+        this.eventHandlers.pre['pre.autocomplete'](this.container, this.suggestions, this.data);
+      }
       if (this.suggestions.length === 0) {
         this.hide();
         return;
@@ -397,11 +425,15 @@ define(['jquery'], function(jQuery) {
       v = this.getQuery();
       mOver = function(xi) { return function() { me.activate(xi); }; };
       mClick = function(xi) { return function() { me.select(xi); }; };
-      this.container.hide().empty();
-      for (var i = 0; i < len; i++) {
+      //this.container.hide().empty();
+      for (i = 0; i < len; i++) {
         if(this.eventHandlers.list && this.eventHandlers.list['list_'+i+'.autocomplete']) { //TODO: make name construction transparent
           fn = this.eventHandlers.list['list_'+i+'.autocomplete'];
-          fn(this.container);
+          returnVal = fn(this.container, this.suggestions, this.data);
+          if(returnVal != i){
+            len = this.suggestions.length;
+            continue;
+          }
         }
         s = this.suggestions[i];
         div = $((me.selectedIndex === i ? '<div class="selected"' : '<div') + ' title="' + s + '">' + f(s, this.data[i], v) + '</div>');
@@ -415,7 +447,7 @@ define(['jquery'], function(jQuery) {
       }
       if(this.eventHandlers.list && this.eventHandlers.list['list_end.autocomplete']) {
         fn = this.eventHandlers.list['list_end.autocomplete'];
-        fn(this.container);
+        fn(this.container, this.suggestions, this.data);
       }
       this.enabled = true;
       this.container.show();
@@ -427,7 +459,7 @@ define(['jquery'], function(jQuery) {
         evnt = evnt + ".autocomplete"
       }
       syncHandle = function(ev){
-        return ev.indexOf('list') != -1  //hardcoded for now
+        return ((ev.indexOf('list') != -1) || (ev.indexOf('pre') != -1)); //for now only list and pre events are synchronous
       }        
       if(!this.eventHandlers[type]){
         this.eventHandlers[type] = {};
@@ -451,26 +483,31 @@ define(['jquery'], function(jQuery) {
       }    
     },
 
+    processThis: function(response) { 
+      this.suggestions = response.suggestions;
+      this.data = response.data;
+      this.secondaryData = response.secondaryData;
+      this.trigger('state.autocomplete', [response.sstate]);
+      this.suggest(); 
+    },
+
     processResponse: function(text) {
-      var response;
-      console.log("RESPONSE ", text);
+      var response, q, currentQuery;
 
       try {
         response = eval('(' + text + ')');
-      } catch (err) { console.log("ERROR ", err);return; }
+      } catch (err) {return; }
       if (!$.isArray(response.data)) { response.data = []; }
-      q = response[this.options.queryWord];
-      if(!this.options.noCache){  //TODO: Figure out how to handle cache in multiple form case...probably need to send it up to the server? super jank
+      q = response.sig || response[this.options.queryWord];  //give priority to the sig property
+      if(!this.options.noCache){  //TODO: Figure out how to handle cache in multiple form case...probably need to send it up to the server?
         this.cachedResponse[q] = response;
-        if (response.suggestions.length === 0) { this.badQueries.push(q); }
+        //if (response.suggestions.length === 0) { this.badQueries.push(q); }
       }
-      if (true) {//(q === this.getQuery()) {  TODO: FIGURE OUT HOW TO HANDLE INPUT PRESERVATION FROM SERVER RESPONSE!
-        this.suggestions = response.suggestions;
-        this.data = response.data;
-        this.secondaryData = response.secondaryData;
-        $(window).trigger('state.autocomplete', [response.sstate]);
-        this.suggest(); 
-      }
+      currentQuery = this.getQuery();
+      //( ((typeof currentQuery === 'object') && (q === currentQuery.sig)) || ((typeof currentQuery === 'string') && (q === currentQuery)))
+      if (q === (currentQuery.sig || currentQuery)) { //{  TODO: FIGURE OUT HOW TO HANDLE INPUT PRESERVATION FROM SERVER RESPONSE!
+        this.processThis(response);
+      } 
     },
 
     activate: function(index) {
@@ -478,13 +515,13 @@ define(['jquery'], function(jQuery) {
       divs = this.container.children();
       // Clear previous selection:
       if (this.selectedIndex !== -1 && divs.length > this.selectedIndex) {
-        $(divs.get(this.selectedIndex)).removeClass();
+        this.removeSelected(this.selectedIndex);
       }
       this.selectedIndex = index;
       if (this.selectedIndex !== -1 && divs.length > this.selectedIndex) {
-        activeItem = divs.get(this.selectedIndex);
-        $(activeItem).addClass('selected');
+        activeItem = this.addSelected(this.selectedIndex);
       }
+      this.trigger('activate.autocomplete', [this.container, this.suggestions, this.data, activeItem, index]);
       return activeItem;
     },
 
@@ -498,8 +535,12 @@ define(['jquery'], function(jQuery) {
       selectedValue = this.suggestions[i];
       if(this.options.watch) { //if watching multiple elements just pass data to passed in function
         if(this.options.onSelect && $.isFunction(this.options.onSelect)){
-          this.options.onSelect(this.suggestions[i], this.data[i], this.watch);
+          this.options.onSelect(selectedValue, this.data[i], this.options.watch);
+        } else{
+          //not sure what do in this case. probably should require onSelect to be defined?
         }
+        this.ignoreValueChange = true;
+        this.hide();
       } else if (selectedValue) {
         this.el.val(selectedValue);
         if (this.options.autoSubmit) {
@@ -515,12 +556,28 @@ define(['jquery'], function(jQuery) {
     moveUp: function() {
       if (this.selectedIndex === -1) { return; }
       if (this.selectedIndex === 0) {
-        this.container.children().get(0).className = '';
+        this.removeSelected(0);
         this.selectedIndex = -1;
-        this.el.val(this.currentValue);
+        this.el.val(this.currentValue);  //TODO: FIX EL NOW THAT IT CAN BE AN ARBITRARY ELEMENT!
         return;
       }
       this.adjustScroll(this.selectedIndex - 1);
+    },
+
+    addSelected: function(index) {
+      div = $(this.container.children().get(index));
+      children = div.children();
+      div.addClass('selected');
+      children.addClass('selected');   
+      return div; 
+    },
+
+    removeSelected: function(index) {
+      div = $(this.container.children().get(index));
+      children = div.children();
+      div.removeClass('selected');
+      children.removeClass('selected');
+      return div;
     },
 
     moveDown: function() {
@@ -531,15 +588,31 @@ define(['jquery'], function(jQuery) {
     adjustScroll: function(i) {
       var activeItem, offsetTop, upperBound, lowerBound;
       activeItem = this.activate(i);
-      offsetTop = activeItem.offsetTop;
-      upperBound = this.container.scrollTop();
-      lowerBound = upperBound + this.options.maxHeight - 25;
-      if (offsetTop < upperBound) {
-        this.container.scrollTop(offsetTop);
-      } else if (offsetTop > lowerBound) {
-        this.container.scrollTop(offsetTop - this.options.maxHeight + 25);
+
+      if(this.options.inline){
+        offsetTop = activeItem.offset().top;
+        upperBound = this.container.offset().top;
+        lowerBound = upperBound + this.options.maxHeight - 25;
+        if(offsetTop < upperBound){
+          this.container.scrollTop(this.container.scrollTop() - (upperBound - offsetTop));
+          this.trigger('acscroll.autocomplete', [this.container, this.suggestions, this.data, activeItem, i]);
+        } else if (offsetTop > lowerBound) {
+          this.container.scrollTop(this.container.scrollTop() + (offsetTop - lowerBound) + 25);
+          this.trigger('acscroll.autocomplete', [this.container, this.suggestions, this.data, activeItem, i]);
+        }
+      }else{
+        offsetTop = activeItem.offsetTop;
+        upperBound = this.container.scrollTop();
+        lowerBound = upperBound + this.options.maxHeight - 25;
+        if (offsetTop < upperBound) {
+          this.container.scrollTop(offsetTop);
+          this.trigger('acscroll.autocomplete', [this.container, this.suggestions, this.data, activeItem, i]);
+        } else if (offsetTop > lowerBound) {
+          this.container.scrollTop(offsetTop - this.options.maxHeight + 25);
+          this.trigger('acscroll.autocomplete', [this.container, this.suggestions, this.data, activeItem, i]);
+        }
+        this.el.val(this.getValue(this.suggestions[i]));
       }
-      this.el.val(this.getValue(this.suggestions[i]));
     },
 
     onSelect: function(i) {
@@ -566,6 +639,9 @@ define(['jquery'], function(jQuery) {
     destroy: function(){
       //get rid of autocomplete container!
       $('[id*="AutocompleteCon"]').remove()
+      if(this.cacheClearInterval != undefined){
+        window.clearInterval(this.cacheClearInterval);
+      }
     }
 
   };
