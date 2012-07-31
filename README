@@ -8,3 +8,22 @@ This is yet another modification to the jquery autocomplete plugin.  The goals o
 Origin author: tomas@devbridge.com
 
 http://www.devbridge.com/projects/autocomplete/jquery/
+
+
+Added Functionality By Chris Olivares
+
+---------------------------------------
+
+This plugin was modified to work with require.js and interface with a URL endpoint that returns formatted data.
+
+Main Additions:
+  1. Callbacks:
+    Jquery autocomplete uses synchronous and asynchronous callbacks to signal events. See the script for the lists.
+
+  2. Multi-input watching. Jquery.autocomplete now allows you to do multi-faceted search by adhering to a few naming conventions on the form side.
+
+  3. Multi-faceted search caching with delayed cache expiry
+
+  4. Separation of search inputs to watch and where the results are displayed. Simply pass in the parent to append to as a jQuery selector.
+
+  5. Search overlay shown between result fetching by simply passing in a jQuery selector.  Useful for providing instant feedback to the user when search is executing.

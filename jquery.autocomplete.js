@@ -1,5 +1,5 @@
 /**
-*  Modified by Chris Olivares - June 2012.  See README for explanation of changes.
+*  Modified by Chris Olivares (v 2.0+)- June 2012.  See README for explanation of changes.
 *
 *  Ajax Autocomplete for jQuery, version 1.1.3
 *  (c) 2010 Tomas Kirda
@@ -12,30 +12,7 @@
 
 /*jslint onevar: true, evil: true, nomen: true, eqeqeq: true, bitwise: true, regexp: true, newcap: true, immed: true */
 /*global window: true, document: true, clearInterval: true, setInterval: true, jQuery: true */
-define(['jquery'], function(jQuery) {
 
-(function($) {
-  var reEscape = new RegExp('(\\' + ['/', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '\\'].join('|\\') + ')', 'g');
-
-  function fnFormatResult(value, data, currentValue) {
-    var rep = function(value, cv) {
-      var pattern = '(' + cv.replace(reEscape, '\\$1') + ')';
-      return value.replace(new RegExp(pattern, 'gi'), '<strong>$1<\/strong>');
-    }
-
-    if(typeof currentValue === "object"){
-      keys = Object.keys(currentValue);
-      for(var i = 0; i < keys.length; i++){
-        cv = currentValue[keys[i]];
-        if(cv.length != 0) {
-          value = rep(value, currentValue[keys[i]]);
-        }
-      }
-      return value;
-    }else {
-      return rep(currentValue);
-    }
-  }
 
   /**
 
@@ -55,8 +32,8 @@ define(['jquery'], function(jQuery) {
     // local autosugest options:
     lookup: ['January', 'February', 'March', 'April', 'May'] //local lookup values 
   
-    New in v 2.0
-    
+
+    New in v 2.0 ------
 
     NOTE: Both of these options must be specified together!
     
@@ -84,6 +61,31 @@ define(['jquery'], function(jQuery) {
         - Function Signature -> ()
         - Return value -> NONE
   */
+
+define(['jquery'], function(jQuery) {
+
+(function($) {
+  var reEscape = new RegExp('(\\' + ['/', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '\\'].join('|\\') + ')', 'g');
+
+  function fnFormatResult(value, data, currentValue) {
+    var rep = function(value, cv) {
+      var pattern = '(' + cv.replace(reEscape, '\\$1') + ')';
+      return value.replace(new RegExp(pattern, 'gi'), '<strong>$1<\/strong>');
+    }
+
+    if(typeof currentValue === "object"){
+      keys = Object.keys(currentValue);
+      for(var i = 0; i < keys.length; i++){
+        cv = currentValue[keys[i]];
+        if(cv.length != 0) {
+          value = rep(value, currentValue[keys[i]]);
+        }
+      }
+      return value;
+    }else {
+      return rep(currentValue);
+    }
+  }
 
   function Autocomplete(el, options) {
     if(options.appendTo ? !options.watch : options.watch){
@@ -123,7 +125,8 @@ define(['jquery'], function(jQuery) {
       delimiter: null,
       zIndex: 9999,
       inline: false,
-      clearCache: 0
+      clearCache: 0,
+      overlay: null
     };
     this.initialize(options);
     this.setOptions(options);    //Set options first so we can correctly set the correct currentValue
@@ -168,10 +171,15 @@ define(['jquery'], function(jQuery) {
       this.inputs.keyup(function(e) { me.onKeyUp(e); });
       if(options.inline) {
         this.el.append(this.container);
+        this.inputs.focus(function() { 
+          me.fixPosition(); 
+          me.ignoreValueChange = false;  //Always set false for now...thinking of registering a focus handle?
+          me.onValueChange();
+        });
       }else{
         this.inputs.blur(function() { me.enableKillerFn(); });
         this.fixPosition();
-        this.inputs.focus(function() { me.fixPosition(); });
+        this.inputs.focus(function() { me.fixPosition(); this.onValueChange();});
       }
     },
     
@@ -262,8 +270,15 @@ define(['jquery'], function(jQuery) {
         default:
           return;
       }
-      e.stopImmediatePropagation();
+      //e.stopImmediatePropagation();   SINCE WE'RE USING SEARCH IN FACEBOX DON'T STOP PROPAGATION!
       e.preventDefault();
+    },
+
+    refocusInput: function() {
+      if(this.eventHandlers.pre){  //TODO: Change how all syncHandlers are regisetered so that pre...etc are not in a nested hash
+        this.eventHandlers.pre['pre.autocomplete'](this.container, this.getQuery());
+      }
+      this.onValueChange();
     },
 
     onKeyUp: function(e) {
@@ -274,9 +289,18 @@ define(['jquery'], function(jQuery) {
           return;
       }
       clearInterval(this.onChangeInterval);
-      if (this.currentValue !== this.getCurrentValue()) {
-        if (this.options.deferRequestBy > 0) {
-          // Defer lookup in case when value changes very quickly:
+      if(this.eventHandlers.pre){  //TODO: Change how all syncHandlers are regisetered so that pre...etc are not in a nested hash
+        this.eventHandlers.pre['pre.autocomplete'](this.container, this.getQuery());
+      }
+      if(this.options.overlay !== null){
+        var parent = this.options.overlay.parent();
+        var pHeight = parent.css('height');
+        this.options.overlay.css('height', pHeight);
+        this.options.overlay.show();
+      }
+      if (true){
+        if (this.options.deferRequestBy > 0) { //TODO: INCLUDE CHECK TO SEE IF RESPONSE IS CACHED!
+          // Defer lookup  when value changes very quickly:
           var me = this;
           this.onChangeInterval = setInterval(function() { me.onValueChange(); }, this.options.deferRequestBy);
         } else {
@@ -297,7 +321,7 @@ define(['jquery'], function(jQuery) {
       }
       if(typeof q === "object" && this.countInputChars(q) < this.options.minChars){
         this.hide();
-      } else if (q === '' || q.length < this.options.minChars) {
+      } else if (typeof q === "string" && q === '' || q.length < this.options.minChars) {
         this.hide();
       } else {
         this.getSuggestions(q);
@@ -308,6 +332,7 @@ define(['jquery'], function(jQuery) {
       var keys = Object.keys(q);
       var chars = "";
       for(var i = 0; i < keys.length; i++){
+        if(keys[i] === "sig"){continue;}  //TODO: figure out how to more generally handle 'sig'
         chars += q[keys[i]];
       }
       return chars.length;
@@ -364,6 +389,10 @@ define(['jquery'], function(jQuery) {
     getSuggestions: function(q) {
       var cr, me;
       var currentString = this.getCurrentValue(q);
+      if(currentString.length == 0){
+        this.hide();
+        return;
+      }
       cr = this.isLocal ? this.getSuggestionsLocal(q) : this.cachedResponse[currentString];
       if (cr && $.isArray(cr.suggestions)) {
         this.suggestions = cr.suggestions;
@@ -410,9 +439,6 @@ define(['jquery'], function(jQuery) {
 
     suggest: function() {
       this.container.hide().empty();
-      if(this.eventHandlers.pre){  //TODO: Change how all syncHandlers are regisetered so that pre...etc are not in a nested hash
-        this.eventHandlers.pre['pre.autocomplete'](this.container, this.suggestions, this.data);
-      }
       if (this.suggestions.length === 0) {
         this.hide();
         return;
@@ -425,7 +451,6 @@ define(['jquery'], function(jQuery) {
       v = this.getQuery();
       mOver = function(xi) { return function() { me.activate(xi); }; };
       mClick = function(xi) { return function() { me.select(xi); }; };
-      //this.container.hide().empty();
       for (i = 0; i < len; i++) {
         if(this.eventHandlers.list && this.eventHandlers.list['list_'+i+'.autocomplete']) { //TODO: make name construction transparent
           fn = this.eventHandlers.list['list_'+i+'.autocomplete'];
@@ -451,6 +476,7 @@ define(['jquery'], function(jQuery) {
       }
       this.enabled = true;
       this.container.show();
+      this.options.overlay.hide();
     },
 
     register: function(evnt, fn){
@@ -499,13 +525,15 @@ define(['jquery'], function(jQuery) {
       } catch (err) {return; }
       if (!$.isArray(response.data)) { response.data = []; }
       q = response.sig || response[this.options.queryWord];  //give priority to the sig property
-      if(!this.options.noCache){  //TODO: Figure out how to handle cache in multiple form case...probably need to send it up to the server?
+      if(!this.options.noCache){
         this.cachedResponse[q] = response;
-        //if (response.suggestions.length === 0) { this.badQueries.push(q); }
       }
       currentQuery = this.getQuery();
       //( ((typeof currentQuery === 'object') && (q === currentQuery.sig)) || ((typeof currentQuery === 'string') && (q === currentQuery)))
-      if (q === (currentQuery.sig || currentQuery)) { //{  TODO: FIGURE OUT HOW TO HANDLE INPUT PRESERVATION FROM SERVER RESPONSE!
+      if (q === (currentQuery.sig || currentQuery)) {
+        if(this.options.overlay !== null){
+          this.options.overlay.hide();
+        }
         this.processThis(response);
       } 
     },
